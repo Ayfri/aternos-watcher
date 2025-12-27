@@ -1,0 +1,14 @@
+services:
+  watcher:
+    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    container_name: aternos-watcher
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - ATERNOS_WATCHER_HOST=${ATERNOS_WATCHER_HOST:-your-server.aternos.me}
+      - ATERNOS_WATCHER_PORT=${ATERNOS_WATCHER_PORT:-25565}
+      - ATERNOS_WATCHER_WEBHOOK_URL=${ATERNOS_WATCHER_WEBHOOK_URL}
+      - ATERNOS_WATCHER_UPDATE_TIME=${ATERNOS_WATCHER_UPDATE_TIME:-30}
+    command: uv run main.py
