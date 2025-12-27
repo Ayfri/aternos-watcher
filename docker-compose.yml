@@ -6,9 +6,6 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    environment:
-      - ATERNOS_WATCHER_HOST=${ATERNOS_WATCHER_HOST:-your-server.aternos.me}
-      - ATERNOS_WATCHER_PORT=${ATERNOS_WATCHER_PORT:-25565}
-      - ATERNOS_WATCHER_WEBHOOK_URL=${ATERNOS_WATCHER_WEBHOOK_URL}
-      - ATERNOS_WATCHER_UPDATE_TIME=${ATERNOS_WATCHER_UPDATE_TIME:-30}
+    env_file:
+      - .env
     command: uv run main.py
