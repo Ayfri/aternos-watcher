@@ -133,7 +133,10 @@ def get_server_status() -> tuple[ServerState, JavaStatusResponse | None]:
             return ServerState.STOPPING, status
 
         if "connect to" in motd:
-            return ServerState.WAITING, status
+            # Only set to WAITING if no players are connected
+            if status.players.online == 0:
+                return ServerState.WAITING, status
+            return ServerState.ONLINE, status
 
         # Secondary check: Ghost servers often report 20 max players but "Offline" in MOTD.
         # Real servers usually have 20+ max players.
@@ -177,7 +180,7 @@ def send_discord_notification(state: ServerState, status: JavaStatusResponse | N
         description += f"\n\n⚠️ **{WAITING_MESSAGE}**"
 
     if status:
-        if SHOW_PLAYERS and state in [ServerState.ONLINE, ServerState.WAITING]:
+        if SHOW_PLAYERS and state == ServerState.ONLINE:
             description += f"\n**Players:** `{status.players.online}/{status.players.max}`"
 
         if SHOW_MOTD:
