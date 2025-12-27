@@ -103,10 +103,10 @@ def get_server_status() -> JavaStatusResponse | None:
 
         # --- ATERNOS FILTERING LOGIC ---
         # The Aternos proxy often stays 'pingable' even when the server is off.
-        # It typically displays "Offline" or red text in the MOTD.
+        # It typically displays "Offline" or "Preparing" in the MOTD.
         motd = str(status.description).lower()
 
-        if "offline" in motd:
+        if "offline" in motd or "preparing" in motd:
             return None
 
         # Secondary check: Ghost servers often report 0 max players,
