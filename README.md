@@ -23,6 +23,19 @@ Create a `.env` file or set the following environment variables:
 | `ATERNOS_WATCHER_PORT` | Server port | `25565` |
 | `ATERNOS_WATCHER_WEBHOOK_URL` | Discord Webhook URL | *Required* |
 | `ATERNOS_WATCHER_UPDATE_TIME` | Polling interval in seconds | `30` |
+| `ATERNOS_WATCHER_ONLINE_TITLE` | Title when server is online | `🟢 Server ONLINE!` |
+| `ATERNOS_WATCHER_OFFLINE_TITLE` | Title when server is offline | `🔴 Server OFFLINE` |
+| `ATERNOS_WATCHER_ONLINE_COLOR` | Hex color when server is online | `30c030` |
+| `ATERNOS_WATCHER_OFFLINE_COLOR` | Hex color when server is offline | `ff4040` |
+| `ATERNOS_WATCHER_FOOTER_TEXT` | Footer text in the embed | `Aternos Watcher` |
+| `ATERNOS_WATCHER_FOOTER_ICON` | Footer icon URL | *None* |
+| `ATERNOS_WATCHER_THUMBNAIL_URL` | Thumbnail image URL | *None* |
+| `ATERNOS_WATCHER_AUTHOR_NAME` | Author name in the embed | *None* |
+| `ATERNOS_WATCHER_AUTHOR_ICON` | Author icon URL | *None* |
+| `ATERNOS_WATCHER_AUTHOR_URL` | Author link URL | *None* |
+| `ATERNOS_WATCHER_MENTION` | Content to ping (e.g. `@everyone`) | *None* |
+| `ATERNOS_WATCHER_SHOW_PLAYERS` | Show player count in embed | `true` |
+| `ATERNOS_WATCHER_SHOW_MOTD` | Show MOTD in embed | `true` |
 
 ## 🚀 Running Locally
 
