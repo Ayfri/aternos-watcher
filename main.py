@@ -52,6 +52,11 @@ class ServerState(Enum):
     STOPPING = "STOPPING"
 
 
+def is_open(state: ServerState) -> bool:
+    """Returns True if the state is considered 'open' (Online or Waiting)."""
+    return state in [ServerState.ONLINE, ServerState.WAITING]
+
+
 # Configure Logging
 logging.basicConfig(
     level=logging.DEBUG if VERBOSE else logging.INFO,
@@ -122,28 +127,21 @@ def get_server_status() -> tuple[ServerState, JavaStatusResponse | None]:
 
         # --- ATERNOS FILTERING LOGIC ---
         motd = str(status.description).lower()
+        version_name = str(status.version.name).lower()
 
-        if "offline" in motd:
+        if "offline" in motd or "offline" in version_name:
             return ServerState.OFFLINE, status
 
-        if "starting" in motd or "preparing" in motd:
+        if "starting" in motd or "preparing" in motd or "starting" in version_name:
             return ServerState.STARTING, status
 
-        if "stopping" in motd:
+        if "stopping" in motd or "stopping" in version_name:
             return ServerState.STOPPING, status
 
-        if "connect to" in motd:
-            # Only set to WAITING if no players are connected
-            if status.players.online == 0:
-                return ServerState.WAITING, status
-            return ServerState.ONLINE, status
-
-        # Secondary check: Ghost servers often report 20 max players but "Offline" in MOTD.
-        # Real servers usually have 20+ max players.
-        # If max players is 0, it's usually a transition state or waiting state.
+        # Aternos proxy (Waiting) usually has max players = 0
+        # Real servers usually have max players > 0
         if status.players.max == 0:
-            # If it's not starting/stopping/waiting, but max is 0, it's likely offline or ghost.
-            return ServerState.OFFLINE, status
+            return ServerState.WAITING, status
 
         return ServerState.ONLINE, status
 
@@ -227,27 +225,27 @@ def main():
     while True:
         current_state, status = get_server_status()
 
-        if current_state != last_state:
+        # Ignore transition states
+        if current_state in [ServerState.STARTING, ServerState.STOPPING]:
+            time.sleep(CHECK_INTERVAL)
+            continue
+
+        if is_open(current_state) != is_open(last_state):
             logger.info(f"State Change Detected: {last_state.value} -> {current_state.value}")
 
-            # Notification Logic
-            # Only notify for ONLINE, WAITING, and OFFLINE
-            # STARTING and STOPPING are silent transition states
-            if current_state in [ServerState.ONLINE, ServerState.WAITING, ServerState.OFFLINE]:
-                # DEBOUNCE LOGIC for ONLINE/WAITING
-                if current_state in [ServerState.ONLINE, ServerState.WAITING]:
-                    time.sleep(5)
-                    confirmed_state, confirmed_status = get_server_status()
-                    if confirmed_state == current_state:
-                        send_discord_notification(current_state, confirmed_status)
-                    else:
-                        logger.info(f"State flicker detected ({current_state.value} -> {confirmed_state.value}). Ignoring.")
-                        # Update current_state to the confirmed one to avoid double notification
-                        current_state = confirmed_state
+            if is_open(current_state):
+                # Became open (WAITING or ONLINE)
+                time.sleep(5)
+                confirmed_state, confirmed_status = get_server_status()
+                if is_open(confirmed_state):
+                    send_discord_notification(confirmed_state, confirmed_status)
+                    last_state = confirmed_state
                 else:
-                    send_discord_notification(current_state, status)
-
-            last_state = current_state
+                    logger.info(f"State flicker detected ({current_state.value} -> {confirmed_state.value}). Ignoring.")
+            else:
+                # Became offline
+                send_discord_notification(ServerState.OFFLINE, status)
+                last_state = ServerState.OFFLINE
 
         time.sleep(CHECK_INTERVAL)
 
