@@ -4,8 +4,9 @@ A strictly typed Python 3.13 monitor for Aternos Minecraft servers. It intellige
 
 ## ✨ Features
 
-- **Ghost Proxy Filtering**: Detects the difference between a truly online server and the Aternos "Offline" MOTD.
-- **Discord Notifications**: Standardized embeds for state changes (Online/Offline).
+- **Ghost Proxy Filtering**: Detects the difference between a truly online server and the Aternos "Offline" or "Preparing" MOTD.
+- **Discord Notifications**: Standardized embeds for state changes (Online/Offline) with full customization.
+- **ANSI MOTD Support**: Automatically converts Minecraft formatting codes (§) to ANSI for colorful MOTD display in Discord.
 - **Debounce Logic**: Prevents notification spam during server startup flickers.
 - **Strictly Typed**: Built with Python 3.13 type hints for reliability.
 

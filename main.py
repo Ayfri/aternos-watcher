@@ -4,7 +4,7 @@ import logging
 import sys
 
 from mcstatus import JavaServer
-from mcstatus.pinger import PingResponse
+from mcstatus.responses import JavaStatusResponse
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from dotenv import load_dotenv
 
@@ -44,7 +44,52 @@ logging.basicConfig(
 logger = logging.getLogger("Watcher")
 
 
-def get_server_status() -> PingResponse | None:
+def mc_to_ansi(text: str) -> str:
+    """
+    Converts Minecraft formatting codes (§) to ANSI escape codes for Discord.
+    Reference: https://minecraft.wiki/w/Formatting_codes
+    """
+    codes = {
+        "0": "\u001b[30m",  # Black
+        "1": "\u001b[34m",  # Dark Blue
+        "2": "\u001b[32m",  # Dark Green
+        "3": "\u001b[36m",  # Dark Aqua
+        "4": "\u001b[31m",  # Dark Red
+        "5": "\u001b[35m",  # Dark Purple
+        "6": "\u001b[33m",  # Gold
+        "7": "\u001b[37m",  # Gray
+        "8": "\u001b[30;1m",  # Dark Gray
+        "9": "\u001b[34;1m",  # Blue
+        "a": "\u001b[32;1m",  # Green
+        "b": "\u001b[36;1m",  # Aqua
+        "c": "\u001b[31;1m",  # Red
+        "d": "\u001b[35;1m",  # Light Purple
+        "e": "\u001b[33;1m",  # Yellow
+        "f": "\u001b[37;1m",  # White
+        "k": "",  # Obfuscated (Not supported in ANSI)
+        "l": "\u001b[1m",  # Bold
+        "m": "",  # Strikethrough (Not supported in ANSI)
+        "n": "\u001b[4m",  # Underline
+        "o": "",  # Italic (Not supported in ANSI)
+        "r": "\u001b[0m",  # Reset
+    }
+
+    result = ""
+    i = 0
+    while i < len(text):
+        if text[i] == "§" and i + 1 < len(text):
+            code = text[i + 1].lower()
+            if code in codes:
+                result += codes[code]
+                i += 2
+                continue
+        result += text[i]
+        i += 1
+
+    return result + "\u001b[0m"
+
+
+def get_server_status() -> JavaStatusResponse | None:
     """
     Checks if the server is truly online.
     Filters out the Aternos 'Ghost Server' (proxy) which responds to ping but has 'offline' in MOTD.
@@ -76,7 +121,7 @@ def get_server_status() -> PingResponse | None:
         return None
 
 
-def send_discord_notification(status: PingResponse | None) -> None:
+def send_discord_notification(status: JavaStatusResponse | None) -> None:
     """Sends a standardized embed to Discord."""
     if not WEBHOOK_URL:
         logger.warning("No Webhook URL provided. Skipping notification.")
@@ -100,7 +145,10 @@ def send_discord_notification(status: PingResponse | None) -> None:
                 motd = motd.to_plain()
             elif isinstance(motd, dict):
                 motd = motd.get("text", "")
-            description += f"\n**MOTD:**\n```\n{motd}\n```"
+
+            # Convert Minecraft formatting to ANSI for Discord
+            ansi_motd = mc_to_ansi(str(status.description))
+            description += f"\n**MOTD:**\n```ansi\n{ansi_motd}\n```"
 
     embed.description = description
 
