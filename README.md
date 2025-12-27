@@ -18,25 +18,44 @@ A strictly typed Python 3.13 monitor for Aternos Minecraft servers. It intellige
 ### Configuration
 Create a `.env` file or set the following environment variables:
 
+#### ⚙️ Core Configuration
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ATERNOS_WATCHER_HOST` | Your Aternos server address | `localhost` |
 | `ATERNOS_WATCHER_PORT` | Server port | `25565` |
-| `ATERNOS_WATCHER_WEBHOOK_URL` | Discord Webhook URL | *Required* |
 | `ATERNOS_WATCHER_UPDATE_TIME` | Polling interval in seconds | `30` |
-| `ATERNOS_WATCHER_ONLINE_TITLE` | Title when server is online | `🟢 Server ONLINE!` |
+| `ATERNOS_WATCHER_VERBOSE` | Enable debug logging | `false` |
+| `ATERNOS_WATCHER_WEBHOOK_URL` | Discord Webhook URL | *Required* |
+
+#### 🎨 Embed Customization
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ATERNOS_WATCHER_OFFLINE_COLOR` | Hex color when server is offline | `ff4040` |
 | `ATERNOS_WATCHER_OFFLINE_TITLE` | Title when server is offline | `🔴 Server OFFLINE` |
 | `ATERNOS_WATCHER_ONLINE_COLOR` | Hex color when server is online | `30c030` |
-| `ATERNOS_WATCHER_OFFLINE_COLOR` | Hex color when server is offline | `ff4040` |
-| `ATERNOS_WATCHER_FOOTER_TEXT` | Footer text in the embed | `Aternos Watcher` |
-| `ATERNOS_WATCHER_FOOTER_ICON` | Footer icon URL | *None* |
-| `ATERNOS_WATCHER_THUMBNAIL_URL` | Thumbnail image URL | *None* |
-| `ATERNOS_WATCHER_AUTHOR_NAME` | Author name in the embed | *None* |
+| `ATERNOS_WATCHER_ONLINE_TITLE` | Title when server is online | `🟢 Server ONLINE!` |
+| `ATERNOS_WATCHER_STOPPING_COLOR` | Hex color when server is stopping | `ff8c00` |
+| `ATERNOS_WATCHER_STOPPING_TITLE` | Title when server is stopping | `🛑 Server STOPPING...` |
+| `ATERNOS_WATCHER_WAITING_COLOR` | Hex color when server is waiting | `ffff00` |
+| `ATERNOS_WATCHER_WAITING_MESSAGE` | Message shown during WAITING state | `Please connect in less than 7 minutes to make it stay open!` |
+| `ATERNOS_WATCHER_WAITING_TITLE` | Title when server is waiting for connection | `⏳ Server WAITING...` |
+
+#### 📝 Embed Metadata
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `ATERNOS_WATCHER_AUTHOR_ICON` | Author icon URL | *None* |
+| `ATERNOS_WATCHER_AUTHOR_NAME` | Author name in the embed | *None* |
 | `ATERNOS_WATCHER_AUTHOR_URL` | Author link URL | *None* |
+| `ATERNOS_WATCHER_FOOTER_ICON` | Footer icon URL | *None* |
+| `ATERNOS_WATCHER_FOOTER_TEXT` | Footer text in the embed | `Aternos Watcher` |
 | `ATERNOS_WATCHER_MENTION` | Content to ping (e.g. `@everyone`) | *None* |
-| `ATERNOS_WATCHER_SHOW_PLAYERS` | Show player count in embed | `true` |
+| `ATERNOS_WATCHER_THUMBNAIL_URL` | Thumbnail image URL | *None* |
+
+#### 🔍 Display Options
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `ATERNOS_WATCHER_SHOW_MOTD` | Show MOTD in embed | `true` |
+| `ATERNOS_WATCHER_SHOW_PLAYERS` | Show player count in embed | `true` |
 
 ## 🚀 Running Locally
 
