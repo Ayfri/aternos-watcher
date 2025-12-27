@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import sys
+from enum import Enum
 
 from mcstatus import JavaServer
 from mcstatus.responses import JavaStatusResponse
@@ -17,12 +18,21 @@ HOST = os.getenv("ATERNOS_WATCHER_HOST", "localhost")
 PORT = int(os.getenv("ATERNOS_WATCHER_PORT", "25565"))
 WEBHOOK_URL = os.getenv("ATERNOS_WATCHER_WEBHOOK_URL")
 CHECK_INTERVAL = int(os.getenv("ATERNOS_WATCHER_UPDATE_TIME", "30"))
+VERBOSE = os.getenv("ATERNOS_WATCHER_VERBOSE", "false").lower() == "true"
 
 # Customization Constants
 ONLINE_TITLE = os.getenv("ATERNOS_WATCHER_ONLINE_TITLE", "🟢 Server ONLINE!")
 OFFLINE_TITLE = os.getenv("ATERNOS_WATCHER_OFFLINE_TITLE", "🔴 Server OFFLINE")
+WAITING_TITLE = os.getenv("ATERNOS_WATCHER_WAITING_TITLE", "⏳ Server WAITING...")
+STOPPING_TITLE = os.getenv("ATERNOS_WATCHER_STOPPING_TITLE", "🛑 Server STOPPING...")
+
 ONLINE_COLOR = os.getenv("ATERNOS_WATCHER_ONLINE_COLOR", "30c030")
 OFFLINE_COLOR = os.getenv("ATERNOS_WATCHER_OFFLINE_COLOR", "ff4040")
+WAITING_COLOR = os.getenv("ATERNOS_WATCHER_WAITING_COLOR", "ffff00")
+STOPPING_COLOR = os.getenv("ATERNOS_WATCHER_STOPPING_COLOR", "ff8c00")
+
+WAITING_MESSAGE = os.getenv("ATERNOS_WATCHER_WAITING_MESSAGE", "Please connect in less than 7 minutes to make it stay open!")
+
 FOOTER_TEXT = os.getenv("ATERNOS_WATCHER_FOOTER_TEXT", "Aternos Watcher")
 FOOTER_ICON = os.getenv("ATERNOS_WATCHER_FOOTER_ICON")
 THUMBNAIL_URL = os.getenv("ATERNOS_WATCHER_THUMBNAIL_URL")
@@ -34,9 +44,17 @@ SHOW_PLAYERS = os.getenv("ATERNOS_WATCHER_SHOW_PLAYERS", "true").lower() == "tru
 SHOW_MOTD = os.getenv("ATERNOS_WATCHER_SHOW_MOTD", "true").lower() == "true"
 
 
+class ServerState(Enum):
+    OFFLINE = "OFFLINE"
+    STARTING = "STARTING"
+    WAITING = "WAITING"
+    ONLINE = "ONLINE"
+    STOPPING = "STOPPING"
+
+
 # Configure Logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if VERBOSE else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
     handlers=[logging.StreamHandler(sys.stdout)]
@@ -89,10 +107,9 @@ def mc_to_ansi(text: str) -> str:
     return result + "\u001b[0m"
 
 
-def get_server_status() -> JavaStatusResponse | None:
+def get_server_status() -> tuple[ServerState, JavaStatusResponse | None]:
     """
-    Checks if the server is truly online.
-    Filters out the Aternos 'Ghost Server' (proxy) which responds to ping but has 'offline' in MOTD.
+    Checks the server status and returns the state and the raw status response.
     """
     try:
         # JavaServer.lookup handles DNS SRV records automatically
@@ -101,43 +118,68 @@ def get_server_status() -> JavaStatusResponse | None:
         # We need the full status to check the MOTD (Description)
         status = server.status()
 
+        logger.debug(f"Raw Status: {status}")
+
         # --- ATERNOS FILTERING LOGIC ---
-        # The Aternos proxy often stays 'pingable' even when the server is off.
-        # It typically displays "Offline" or "Preparing" in the MOTD.
         motd = str(status.description).lower()
 
-        if "offline" in motd or "preparing" in motd:
-            return None
+        if "offline" in motd:
+            return ServerState.OFFLINE, status
 
-        # Secondary check: Ghost servers often report 0 max players,
-        # whereas a real server usually has 20+.
+        if "starting" in motd or "preparing" in motd:
+            return ServerState.STARTING, status
+
+        if "stopping" in motd:
+            return ServerState.STOPPING, status
+
+        if "connect to" in motd:
+            return ServerState.WAITING, status
+
+        # Secondary check: Ghost servers often report 20 max players but "Offline" in MOTD.
+        # Real servers usually have 20+ max players.
+        # If max players is 0, it's usually a transition state or waiting state.
         if status.players.max == 0:
-            return None
+            # If it's not starting/stopping/waiting, but max is 0, it's likely offline or ghost.
+            return ServerState.OFFLINE, status
 
-        return status
+        return ServerState.ONLINE, status
 
     except Exception:
         # Any connection error (Timeout, Refused, etc.) means it's down.
-        return None
+        return ServerState.OFFLINE, None
 
 
-def send_discord_notification(status: JavaStatusResponse | None) -> None:
+def send_discord_notification(state: ServerState, status: JavaStatusResponse | None) -> None:
     """Sends a standardized embed to Discord."""
     if not WEBHOOK_URL:
         logger.warning("No Webhook URL provided. Skipping notification.")
         return
 
-    is_online = status is not None
-    status_text = ONLINE_TITLE if is_online else OFFLINE_TITLE
-    color = ONLINE_COLOR if is_online else OFFLINE_COLOR
+    if state == ServerState.ONLINE:
+        status_text = ONLINE_TITLE
+        color = ONLINE_COLOR
+    elif state == ServerState.WAITING:
+        status_text = WAITING_TITLE
+        color = WAITING_COLOR
+    elif state == ServerState.STOPPING:
+        status_text = STOPPING_TITLE
+        color = STOPPING_COLOR
+    else:
+        status_text = OFFLINE_TITLE
+        color = OFFLINE_COLOR
 
     webhook = DiscordWebhook(url=WEBHOOK_URL, content=MENTION if MENTION else None)
     embed = DiscordEmbed(title=status_text, color=color)
 
     description = f"**Host:** `{HOST}`"
-    if is_online and status:
-        if SHOW_PLAYERS:
+
+    if state == ServerState.WAITING:
+        description += f"\n\n⚠️ **{WAITING_MESSAGE}**"
+
+    if status:
+        if SHOW_PLAYERS and state in [ServerState.ONLINE, ServerState.WAITING]:
             description += f"\n**Players:** `{status.players.online}/{status.players.max}`"
+
         if SHOW_MOTD:
             # Clean MOTD from formatting codes if possible, or just use it as is
             motd = status.description
@@ -176,29 +218,33 @@ def main():
     logger.info(f"Starting Aternos Watcher for {HOST}:{PORT}...")
     logger.info(f"Polling every {CHECK_INTERVAL} seconds.")
 
-    # Initialize state as False to avoid spamming "Offline" notifications on boot
-    last_state: bool = False
+    # Initialize state as OFFLINE to avoid spamming notifications on boot
+    last_state = ServerState.OFFLINE
 
     while True:
-        status = get_server_status()
-        current_state = status is not None
+        current_state, status = get_server_status()
 
         if current_state != last_state:
-            logger.info(f"State Change Detected: {last_state} -> {current_state}")
+            logger.info(f"State Change Detected: {last_state.value} -> {current_state.value}")
 
-            if current_state:
-                # DEBOUNCE LOGIC
-                # Aternos proxies sometimes flicker. If we detect ONLINE, wait 5s and confirm.
-                time.sleep(5)
-                confirmed_status = get_server_status()
-                if confirmed_status:
-                    send_discord_notification(confirmed_status)
-                    last_state = True
+            # Notification Logic
+            # Only notify for ONLINE, WAITING, and OFFLINE
+            # STARTING and STOPPING are silent transition states
+            if current_state in [ServerState.ONLINE, ServerState.WAITING, ServerState.OFFLINE]:
+                # DEBOUNCE LOGIC for ONLINE/WAITING
+                if current_state in [ServerState.ONLINE, ServerState.WAITING]:
+                    time.sleep(5)
+                    confirmed_state, confirmed_status = get_server_status()
+                    if confirmed_state == current_state:
+                        send_discord_notification(current_state, confirmed_status)
+                    else:
+                        logger.info(f"State flicker detected ({current_state.value} -> {confirmed_state.value}). Ignoring.")
+                        # Update current_state to the confirmed one to avoid double notification
+                        current_state = confirmed_state
                 else:
-                    logger.info("Ghost boot detected (False Positive). Ignoring.")
-            else:
-                send_discord_notification(None)
-                last_state = False
+                    send_discord_notification(current_state, status)
+
+            last_state = current_state
 
         time.sleep(CHECK_INTERVAL)
 
