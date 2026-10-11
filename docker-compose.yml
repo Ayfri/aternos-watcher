@@ -1,6 +1,6 @@
 services:
   watcher:
-    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    image: ghcr.io/astral-sh/uv:python3.14-trixie-slim
     container_name: aternos-watcher
     restart: unless-stopped
     volumes:
@@ -8,4 +8,6 @@ services:
     working_dir: /app
     env_file:
       - .env
-    command: uv run main.py
+    environment:
+      UV_PROJECT_ENVIRONMENT: /venv
+    command: uv run --locked --no-dev main.py
