@@ -2,16 +2,22 @@
 name = "aternos-watcher"
 version = "1.0.0"
 description = "A strictly typed Aternos server watcher that filters out ghost proxies."
-requires-python = ">=3.13"
-dependencies = [
-    "mcstatus>=12.0.6",
-    "discord-webhook>=1.4.1",
-    "python-dotenv>=1.2.1",
+requires-python = ">=3.14"
+dependencies = ["mcstatus>=14.2.0"]
+
+[dependency-groups]
+dev = ["pyrefly>=1.3.2", "ruff>=0.17.0"]
+
+[tool.ruff]
+line-length = 140
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # Conflicts with the formatter.
+    "CPY",    # The LICENSE file covers the whole project.
+    "D",      # Docstrings only where they document a non-obvious behavior.
 ]
 
-[tool.uv]
-package = false
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.pyrefly]
+preset = "strict"

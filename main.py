@@ -1,258 +1,262 @@
-import os
-import time
+import json
 import logging
+import os
+import re
+import signal
 import sys
-from enum import Enum
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum, auto
+from http.client import HTTPException
+from typing import TYPE_CHECKING, NamedTuple, Self
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 from mcstatus import JavaServer
-from mcstatus.responses import JavaStatusResponse
-from discord_webhook import DiscordWebhook, DiscordEmbed
-from dotenv import load_dotenv
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
-# Load environment variables
-load_dotenv()
+    from mcstatus.responses import JavaStatusResponse
 
-# Configuration Constants
-HOST = os.getenv("ATERNOS_WATCHER_HOST", "localhost")
-PORT = int(os.getenv("ATERNOS_WATCHER_PORT", "25565"))
-WEBHOOK_URL = os.getenv("ATERNOS_WATCHER_WEBHOOK_URL")
-CHECK_INTERVAL = int(os.getenv("ATERNOS_WATCHER_UPDATE_TIME", "30"))
-VERBOSE = os.getenv("ATERNOS_WATCHER_VERBOSE", "false").lower() == "true"
+logger = logging.getLogger("aternos-watcher")
 
-# Customization Constants
-ONLINE_TITLE = os.getenv("ATERNOS_WATCHER_ONLINE_TITLE", "🟢 Server ONLINE!")
-OFFLINE_TITLE = os.getenv("ATERNOS_WATCHER_OFFLINE_TITLE", "🔴 Server OFFLINE")
-WAITING_TITLE = os.getenv("ATERNOS_WATCHER_WAITING_TITLE", "⏳ Server WAITING...")
-STOPPING_TITLE = os.getenv("ATERNOS_WATCHER_STOPPING_TITLE", "🛑 Server STOPPING...")
+CONFIRM_DELAY = 5
+"""Aternos intermittently resets status connections, so every open/closed change is re-checked after this many seconds."""
 
-ONLINE_COLOR = os.getenv("ATERNOS_WATCHER_ONLINE_COLOR", "30c030")
-OFFLINE_COLOR = os.getenv("ATERNOS_WATCHER_OFFLINE_COLOR", "ff4040")
-WAITING_COLOR = os.getenv("ATERNOS_WATCHER_WAITING_COLOR", "ffff00")
-STOPPING_COLOR = os.getenv("ATERNOS_WATCHER_STOPPING_COLOR", "ff8c00")
+ANSI_CODES = {
+    "0": "\x1b[30m",
+    "1": "\x1b[34m",
+    "2": "\x1b[32m",
+    "3": "\x1b[36m",
+    "4": "\x1b[31m",
+    "5": "\x1b[35m",
+    "6": "\x1b[33m",
+    "7": "\x1b[37m",
+    "8": "\x1b[30;1m",
+    "9": "\x1b[34;1m",
+    "a": "\x1b[32;1m",
+    "b": "\x1b[36;1m",
+    "c": "\x1b[31;1m",
+    "d": "\x1b[35;1m",
+    "e": "\x1b[33;1m",
+    "f": "\x1b[37;1m",
+    "k": "",
+    "l": "\x1b[1m",
+    "m": "",
+    "n": "\x1b[4m",
+    "o": "",
+    "r": "\x1b[0m",
+}
+"""Minecraft formatting codes mapped to the basic ANSI subset Discord renders, `Motd.to_ansi()` emits 24-bit colors Discord ignores."""
 
-WAITING_MESSAGE = os.getenv("ATERNOS_WATCHER_WAITING_MESSAGE", "Please connect in less than 7 minutes to make it stay open!")
-
-FOOTER_TEXT = os.getenv("ATERNOS_WATCHER_FOOTER_TEXT", "Aternos Watcher")
-FOOTER_ICON = os.getenv("ATERNOS_WATCHER_FOOTER_ICON")
-THUMBNAIL_URL = os.getenv("ATERNOS_WATCHER_THUMBNAIL_URL")
-AUTHOR_NAME = os.getenv("ATERNOS_WATCHER_AUTHOR_NAME")
-AUTHOR_ICON = os.getenv("ATERNOS_WATCHER_AUTHOR_ICON")
-AUTHOR_URL = os.getenv("ATERNOS_WATCHER_AUTHOR_URL")
-MENTION = os.getenv("ATERNOS_WATCHER_MENTION")
-SHOW_PLAYERS = os.getenv("ATERNOS_WATCHER_SHOW_PLAYERS", "true").lower() == "true"
-SHOW_MOTD = os.getenv("ATERNOS_WATCHER_SHOW_MOTD", "true").lower() == "true"
-
-
-class ServerState(Enum):
-    OFFLINE = "OFFLINE"
-    STARTING = "STARTING"
-    WAITING = "WAITING"
-    ONLINE = "ONLINE"
-    STOPPING = "STOPPING"
-
-
-def is_open(state: ServerState) -> bool:
-    """Returns True if the state is considered 'open' (Online or Waiting)."""
-    return state in [ServerState.ONLINE, ServerState.WAITING]
-
-
-# Configure Logging
-logging.basicConfig(
-    level=logging.DEBUG if VERBOSE else logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-logger = logging.getLogger("Watcher")
+MC_FORMAT_CODE = re.compile(r"§([0-9a-fk-or])", re.IGNORECASE)
 
 
 def mc_to_ansi(text: str) -> str:
-    """
-    Converts Minecraft formatting codes (§) to ANSI escape codes for Discord.
-    Reference: https://minecraft.wiki/w/Formatting_codes
-    """
-    codes = {
-        "0": "\u001b[30m",  # Black
-        "1": "\u001b[34m",  # Dark Blue
-        "2": "\u001b[32m",  # Dark Green
-        "3": "\u001b[36m",  # Dark Aqua
-        "4": "\u001b[31m",  # Dark Red
-        "5": "\u001b[35m",  # Dark Purple
-        "6": "\u001b[33m",  # Gold
-        "7": "\u001b[37m",  # Gray
-        "8": "\u001b[30;1m",  # Dark Gray
-        "9": "\u001b[34;1m",  # Blue
-        "a": "\u001b[32;1m",  # Green
-        "b": "\u001b[36;1m",  # Aqua
-        "c": "\u001b[31;1m",  # Red
-        "d": "\u001b[35;1m",  # Light Purple
-        "e": "\u001b[33;1m",  # Yellow
-        "f": "\u001b[37;1m",  # White
-        "k": "",  # Obfuscated (Not supported in ANSI)
-        "l": "\u001b[1m",  # Bold
-        "m": "",  # Strikethrough (Not supported in ANSI)
-        "n": "\u001b[4m",  # Underline
-        "o": "",  # Italic (Not supported in ANSI)
-        "r": "\u001b[0m",  # Reset
-    }
-
-    result = ""
-    i = 0
-    while i < len(text):
-        if text[i] == "§" and i + 1 < len(text):
-            code = text[i + 1].lower()
-            if code in codes:
-                result += codes[code]
-                i += 2
-                continue
-        result += text[i]
-        i += 1
-
-    return result + "\u001b[0m"
+    return MC_FORMAT_CODE.sub(lambda match: ANSI_CODES[match[1].lower()], text) + ANSI_CODES["r"]
 
 
-def get_server_status() -> tuple[ServerState, JavaStatusResponse | None]:
-    """
-    Checks the server status and returns the state and the raw status response.
-    """
-    try:
-        # JavaServer.lookup handles DNS SRV records automatically
-        server = JavaServer.lookup(f"{HOST}:{PORT}")
+class ServerState(StrEnum):
+    OFFLINE = auto()
+    STARTING = auto()
+    WAITING = auto()
+    ONLINE = auto()
+    STOPPING = auto()
 
-        # We need the full status to check the MOTD (Description)
-        status = server.status()
+    @property
+    def is_open(self) -> bool:
+        return self in {ServerState.WAITING, ServerState.ONLINE}
 
-        logger.debug(f"Raw Status: {status}")
+    @property
+    def is_transition(self) -> bool:
+        return self in {ServerState.STARTING, ServerState.STOPPING}
 
-        # --- ATERNOS FILTERING LOGIC ---
-        motd = str(status.description).lower()
-        version_name = str(status.version.name).lower()
 
-        if "offline" in motd or "offline" in version_name:
+class EmbedStyle(NamedTuple):
+    title: str
+    color: int
+
+
+def env(name: str, default: str) -> str:
+    return os.environ.get(f"ATERNOS_WATCHER_{name}", default)
+
+
+def optional_env(name: str) -> str | None:
+    return os.environ.get(f"ATERNOS_WATCHER_{name}") or None
+
+
+def without_none(**fields: str | None) -> dict[str, str]:
+    return {key: value for key, value in fields.items() if value is not None}
+
+
+def style_env(state: str, title: str, color: str) -> EmbedStyle:
+    return EmbedStyle(env(f"{state}_TITLE", title), int(env(f"{state}_COLOR", color).removeprefix("#"), 16))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Config:
+    address: str
+    webhook_url: str
+    check_interval: int
+    verbose: bool
+    styles: Mapping[ServerState, EmbedStyle]
+    waiting_message: str
+    footer_text: str | None
+    footer_icon: str | None
+    thumbnail_url: str | None
+    author_name: str | None
+    author_icon: str | None
+    author_url: str | None
+    mention: str | None
+    show_players: bool
+    show_motd: bool
+
+    @classmethod
+    def from_env(cls) -> Self:
+        webhook_url = optional_env("WEBHOOK_URL") or ""
+        url_parts = urlsplit(webhook_url)
+        if url_parts.scheme != "https" or not url_parts.netloc or any(char.isspace() for char in webhook_url):
+            msg = "ATERNOS_WATCHER_WEBHOOK_URL must be set to an https:// Discord webhook URL."
+            raise SystemExit(msg)
+
+        host = optional_env("HOST") or "localhost"
+        port = optional_env("PORT")
+        if port is not None and not 0 < int(port) < 1 << 16:
+            msg = f"ATERNOS_WATCHER_PORT must be between 1 and 65535, got {port}."
+            raise SystemExit(msg)
+        return cls(
+            address=host if port is None else f"{host}:{port}",
+            webhook_url=webhook_url,
+            check_interval=int(env("UPDATE_TIME", "30")),
+            verbose=env("VERBOSE", "false").lower() == "true",
+            styles={
+                ServerState.ONLINE: style_env("ONLINE", "🟢 Server ONLINE!", "30c030"),
+                ServerState.WAITING: style_env("WAITING", "⏳ Server WAITING...", "ffff00"),
+                ServerState.OFFLINE: style_env("OFFLINE", "🔴 Server OFFLINE", "ff4040"),
+            },
+            waiting_message=env("WAITING_MESSAGE", "Please connect in less than 7 minutes to make it stay open!"),
+            footer_text=env("FOOTER_TEXT", "Aternos Watcher") or None,
+            footer_icon=optional_env("FOOTER_ICON"),
+            thumbnail_url=optional_env("THUMBNAIL_URL"),
+            author_name=optional_env("AUTHOR_NAME"),
+            author_icon=optional_env("AUTHOR_ICON"),
+            author_url=optional_env("AUTHOR_URL"),
+            mention=optional_env("MENTION"),
+            show_players=env("SHOW_PLAYERS", "true").lower() == "true",
+            show_motd=env("SHOW_MOTD", "true").lower() == "true",
+        )
+
+
+class Watcher:
+    def __init__(self, config: Config) -> None:
+        self.config = config
+        self.last_state = ServerState.OFFLINE
+
+    def check(self) -> tuple[ServerState, JavaStatusResponse | None]:
+        try:
+            # Without a port, lookup resolves the SRV record each time, following Aternos' dynamic ports.
+            status = JavaServer.lookup(self.config.address).status()
+            texts = (status.motd.to_plain().lower(), status.version.name.lower())
+        except Exception as error:  # noqa: BLE001 - any failed or unparsable status means the server isn't reachable.
+            logger.debug("Status check failed: %r", error)
+            return ServerState.OFFLINE, None
+
+        logger.debug("Raw status: %s", status.raw)
+
+        if any("offline" in text for text in texts):
             return ServerState.OFFLINE, status
-
-        if "starting" in motd or "preparing" in motd or "starting" in version_name:
+        if any("starting" in text or "preparing" in text for text in texts):
             return ServerState.STARTING, status
-
-        if "stopping" in motd or "stopping" in version_name:
+        if any("stopping" in text for text in texts):
             return ServerState.STOPPING, status
+        # The Aternos waiting proxy reports 0 max players, a real server never does.
+        return ServerState.WAITING if status.players.max == 0 else ServerState.ONLINE, status
 
-        # Aternos proxy (Waiting) usually has max players = 0
-        # Real servers usually have max players > 0
-        if status.players.max == 0:
-            return ServerState.WAITING, status
+    def build_embed(self, state: ServerState, status: JavaStatusResponse | None) -> dict[str, object]:
+        config = self.config
+        style = config.styles[state]
+        description = [f"**Host:** `{config.address}`"]
 
-        return ServerState.ONLINE, status
+        if state is ServerState.WAITING:
+            description.append(f"\n⚠️ **{config.waiting_message}**")
+        if status is not None:
+            if config.show_players and state is ServerState.ONLINE:
+                description.append(f"**Players:** `{status.players.online}/{status.players.max}`")
+            if config.show_motd:
+                description.append(f"**MOTD:**\n```ansi\n{mc_to_ansi(status.motd.to_minecraft())}\n```")
 
-    except Exception:
-        # Any connection error (Timeout, Refused, etc.) means it's down.
-        return ServerState.OFFLINE, None
+        embed: dict[str, object] = {
+            "title": style.title,
+            "color": style.color,
+            "description": "\n".join(description),
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        if config.author_name:
+            embed["author"] = without_none(name=config.author_name, url=config.author_url, icon_url=config.author_icon)
+        if config.thumbnail_url:
+            embed["thumbnail"] = {"url": config.thumbnail_url}
+        if config.footer_text:
+            embed["footer"] = without_none(text=config.footer_text, icon_url=config.footer_icon)
+        return embed
+
+    def notify(self, state: ServerState, status: JavaStatusResponse | None) -> None:
+        payload: dict[str, object] = {"embeds": [self.build_embed(state, status)]}
+        if self.config.mention:
+            payload["content"] = self.config.mention
+        request = Request(  # noqa: S310 - the webhook URL is validated as https:// in Config.from_env.
+            self.config.webhook_url,
+            data=json.dumps(payload).encode(),
+            # Discord's Cloudflare rejects urllib's default User-Agent with a 403.
+            headers={"Content-Type": "application/json", "User-Agent": "aternos-watcher"},
+        )
+        try:
+            with urlopen(request, timeout=10):  # noqa: S310 - same validated https:// URL.
+                logger.info("Notification sent: %s", self.config.styles[state].title)
+        except OSError, HTTPException:
+            logger.exception("Failed to send webhook")
+
+    def is_change(self, state: ServerState) -> bool:
+        return not state.is_transition and state.is_open != self.last_state.is_open
+
+    def tick(self) -> None:
+        state, _ = self.check()
+        if not self.is_change(state):
+            return
+
+        time.sleep(CONFIRM_DELAY)
+        confirmed_state, status = self.check()
+        if not self.is_change(confirmed_state):
+            logger.info("State flicker detected (%s -> %s), ignoring.", state, confirmed_state)
+            return
+
+        logger.info("State change: %s -> %s", self.last_state, confirmed_state)
+        self.notify(confirmed_state, status)
+        self.last_state = confirmed_state
+
+    def run(self) -> None:
+        logger.info("Watching %s every %d seconds.", self.config.address, self.config.check_interval)
+        while True:
+            self.tick()
+            time.sleep(self.config.check_interval)
 
 
-def send_discord_notification(state: ServerState, status: JavaStatusResponse | None) -> None:
-    """Sends a standardized embed to Discord."""
-    if not WEBHOOK_URL:
-        logger.warning("No Webhook URL provided. Skipping notification.")
-        return
-
-    if state == ServerState.ONLINE:
-        status_text = ONLINE_TITLE
-        color = ONLINE_COLOR
-    elif state == ServerState.WAITING:
-        status_text = WAITING_TITLE
-        color = WAITING_COLOR
-    elif state == ServerState.STOPPING:
-        status_text = STOPPING_TITLE
-        color = STOPPING_COLOR
-    else:
-        status_text = OFFLINE_TITLE
-        color = OFFLINE_COLOR
-
-    webhook = DiscordWebhook(url=WEBHOOK_URL, content=MENTION if MENTION else None)
-    embed = DiscordEmbed(title=status_text, color=color)
-
-    description = f"**Host:** `{HOST}`"
-
-    if state == ServerState.WAITING:
-        description += f"\n\n⚠️ **{WAITING_MESSAGE}**"
-
-    if status:
-        if SHOW_PLAYERS and state == ServerState.ONLINE:
-            description += f"\n**Players:** `{status.players.online}/{status.players.max}`"
-
-        if SHOW_MOTD:
-            # Clean MOTD from formatting codes if possible, or just use it as is
-            motd = status.description
-            if hasattr(motd, "to_plain"):
-                motd = motd.to_plain()
-            elif isinstance(motd, dict):
-                motd = motd.get("text", "")
-
-            # Convert Minecraft formatting to ANSI for Discord
-            ansi_motd = mc_to_ansi(str(status.description))
-            description += f"\n**MOTD:**\n```ansi\n{ansi_motd}\n```"
-
-    embed.description = description
-
-    if AUTHOR_NAME:
-        embed.set_author(name=AUTHOR_NAME, url=AUTHOR_URL, icon_url=AUTHOR_ICON)
-
-    if THUMBNAIL_URL:
-        embed.set_thumbnail(url=THUMBNAIL_URL)
-
-    if FOOTER_TEXT:
-        embed.set_footer(text=FOOTER_TEXT, icon_url=FOOTER_ICON)
-
-    embed.set_timestamp()
-
-    webhook.add_embed(embed)
-
+def main() -> None:
+    config = Config.from_env()
+    logging.basicConfig(
+        level=logging.DEBUG if config.verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stdout,
+    )
+    # `docker stop` sends SIGTERM, raising KeyboardInterrupt makes it stop as cleanly as Ctrl+C.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        webhook.execute()
-        logger.info(f"Notification sent: {status_text}")
-    except Exception as e:
-        logger.error(f"Failed to send webhook: {e}")
-
-
-def main():
-    logger.info(f"Starting Aternos Watcher for {HOST}:{PORT}...")
-    logger.info(f"Polling every {CHECK_INTERVAL} seconds.")
-
-    # Initialize state as OFFLINE to avoid spamming notifications on boot
-    last_state = ServerState.OFFLINE
-
-    while True:
-        current_state, status = get_server_status()
-
-        # Ignore transition states
-        if current_state in [ServerState.STARTING, ServerState.STOPPING]:
-            time.sleep(CHECK_INTERVAL)
-            continue
-
-        if is_open(current_state) != is_open(last_state):
-            logger.info(f"State Change Detected: {last_state.value} -> {current_state.value}")
-
-            if is_open(current_state):
-                # Became open (WAITING or ONLINE)
-                time.sleep(5)
-                confirmed_state, confirmed_status = get_server_status()
-                if is_open(confirmed_state):
-                    send_discord_notification(confirmed_state, confirmed_status)
-                    last_state = confirmed_state
-                else:
-                    logger.info(f"State flicker detected ({current_state.value} -> {confirmed_state.value}). Ignoring.")
-            else:
-                # Became offline
-                send_discord_notification(ServerState.OFFLINE, status)
-                last_state = ServerState.OFFLINE
-
-        time.sleep(CHECK_INTERVAL)
+        Watcher(config).run()
+    except KeyboardInterrupt:
+        logger.info("Watcher stopped.")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("Watcher stopped by user.")
-        sys.exit(0)
+    main()
