@@ -1,31 +1,33 @@
 # 🚀 Aternos Watcher
 
-A strictly typed Python 3.13 monitor for Aternos Minecraft servers. It intelligently filters out "Ghost Proxies" (Aternos servers that appear online but are actually in a standby/offline state).
+A strictly typed Python 3.14 monitor for Aternos Minecraft servers. It intelligently filters out "Ghost Proxies" (Aternos servers that appear online but are actually in a standby/offline state).
 
 ## ✨ Features
 
 - **Ghost Proxy Filtering**: Detects the difference between a truly online server and the Aternos "Offline" or "Preparing" MOTD.
 - **Discord Notifications**: Standardized embeds for state changes (Online/Offline) with full customization.
 - **ANSI MOTD Support**: Automatically converts Minecraft formatting codes (§) to ANSI for colorful MOTD display in Discord.
-- **Debounce Logic**: Prevents notification spam during server startup flickers.
-- **Strictly Typed**: Built with Python 3.13 type hints for reliability.
+- **Debounce Logic**: Re-checks every open/closed change after 5 seconds, so startup flickers and intermittent connection resets never notify.
+- **Dynamic Ports**: Follows the server's SRV record when no port is set, like the Minecraft client does.
+- **Strictly Typed**: Checked by [Pyrefly](https://pyrefly.org) in strict mode and linted by [Ruff](https://docs.astral.sh/ruff) with every rule enabled.
+- **Single Dependency**: Only [mcstatus](https://github.com/py-mine/mcstatus), Discord webhooks go through the standard library.
 
 ## 🛠️ Installation & Setup
 
 ### Prerequisites
-- [uv](https://github.com/astral-sh/uv) (Recommended) or Python 3.13+
+- [uv](https://github.com/astral-sh/uv) (Recommended) or Python 3.14+
 
 ### Configuration
-Create a `.env` file or set the following environment variables:
+Set the following environment variables, or copy `.env.template` to `.env`, which docker compose and `uv run --env-file .env` load:
 
 #### ⚙️ Core Configuration
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ATERNOS_WATCHER_HOST` | Your Aternos server address | `localhost` |
-| `ATERNOS_WATCHER_PORT` | Server port | `25565` |
+| `ATERNOS_WATCHER_PORT` | Server port, leave unset on Aternos since its ports are dynamic | SRV record, then `25565` |
 | `ATERNOS_WATCHER_UPDATE_TIME` | Polling interval in seconds | `30` |
 | `ATERNOS_WATCHER_VERBOSE` | Enable debug logging | `false` |
-| `ATERNOS_WATCHER_WEBHOOK_URL` | Discord Webhook URL | *Required* |
+| `ATERNOS_WATCHER_WEBHOOK_URL` | Discord Webhook URL (`https://`) | *Required* |
 
 #### 🎨 Embed Customization
 | Variable | Description | Default |
@@ -34,8 +36,6 @@ Create a `.env` file or set the following environment variables:
 | `ATERNOS_WATCHER_OFFLINE_TITLE` | Title when server is offline | `🔴 Server OFFLINE` |
 | `ATERNOS_WATCHER_ONLINE_COLOR` | Hex color when server is online | `30c030` |
 | `ATERNOS_WATCHER_ONLINE_TITLE` | Title when server is online | `🟢 Server ONLINE!` |
-| `ATERNOS_WATCHER_STOPPING_COLOR` | Hex color when server is stopping | `ff8c00` |
-| `ATERNOS_WATCHER_STOPPING_TITLE` | Title when server is stopping | `🛑 Server STOPPING...` |
 | `ATERNOS_WATCHER_WAITING_COLOR` | Hex color when server is waiting | `ffff00` |
 | `ATERNOS_WATCHER_WAITING_MESSAGE` | Message shown during WAITING state | `Please connect in less than 7 minutes to make it stay open!` |
 | `ATERNOS_WATCHER_WAITING_TITLE` | Title when server is waiting for connection | `⏳ Server WAITING...` |
@@ -60,31 +60,22 @@ Create a `.env` file or set the following environment variables:
 ## 🚀 Running Locally
 
 ```bash
-# Install dependencies and run
-uv run main.py
+# Install dependencies and run with the variables from .env
+uv run --env-file .env main.py
+```
+
+### Linting & Type Checking
+
+```bash
+uv run ruff format
+uv run ruff check
+uv run pyrefly check
 ```
 
 ## 🐳 Docker Deployment
 
 ### Docker Compose (Recommended)
-Create a `docker-compose.yml` file:
-
-```yaml
-services:
-  watcher:
-    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
-    container_name: aternos-watcher
-    restart: unless-stopped
-    volumes:
-      - .:/app
-    working_dir: /app
-    environment:
-      - ATERNOS_WATCHER_HOST=your-server.aternos.me
-      - ATERNOS_WATCHER_WEBHOOK_URL=https://discord.com/api/webhooks/...
-    command: uv run main.py
-```
-
-Run with:
+Copy `.env.template` to `.env`, fill it, then run the provided `docker-compose.yml` with:
 ```bash
 docker compose up -d
 ```
@@ -95,4 +86,4 @@ If you are using [Dokploy](https://dokploy.com), use the following configuration
 
 1. **Build Type**: Nixpacks
 2. **Environment Variables**: Set the variables listed in the Configuration section.
-3. **Start Command**: `uv run main.py`
+3. **Start Command**: `uv run --locked --no-dev main.py`
