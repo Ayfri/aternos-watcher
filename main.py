@@ -25,6 +25,9 @@ logger = logging.getLogger("aternos-watcher")
 CONFIRM_DELAY = 5
 """Aternos intermittently resets status connections, so every open/closed change is re-checked after this many seconds."""
 
+CHECK_TIMEOUT = 10
+"""Seconds allowed for the SRV lookup and the status ping, a booting Aternos server answers slower than mcstatus' 3 s default."""
+
 ANSI_CODES = {
     "0": "\x1b[30m",
     "1": "\x1b[34m",
@@ -153,15 +156,21 @@ class Watcher:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.last_state = ServerState.OFFLINE
+        self.last_error: str | None = None
 
     def check(self) -> tuple[ServerState, JavaStatusResponse | None]:
         try:
             # Without a port, lookup resolves the SRV record each time, following Aternos' dynamic ports.
-            status = JavaServer.lookup(self.config.address).status()
+            status = JavaServer.lookup(self.config.address, timeout=CHECK_TIMEOUT).status()
             texts = (status.motd.to_plain().lower(), status.version.name.lower())
         except Exception as error:  # noqa: BLE001 - any failed or unparsable status means the server isn't reachable.
-            logger.debug("Status check failed: %r", error)
+            # A reset connection is the normal offline answer, anything else (timeout, DNS, parsing) is logged once per kind.
+            description = repr(error)
+            if not isinstance(error, ConnectionResetError) and description != self.last_error:
+                logger.warning("Status check failed, treating as offline: %s", description)
+            self.last_error = description
             return ServerState.OFFLINE, None
+        self.last_error = None
 
         logger.debug("Raw status: %s", status.raw)
 
