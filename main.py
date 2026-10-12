@@ -156,6 +156,7 @@ class Watcher:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.last_state = ServerState.OFFLINE
+        self.last_observed: ServerState | None = None
         self.last_error: str | None = None
 
     def check(self) -> tuple[ServerState, JavaStatusResponse | None]:
@@ -169,19 +170,28 @@ class Watcher:
             if not isinstance(error, ConnectionResetError) and description != self.last_error:
                 logger.warning("Status check failed, treating as offline: %s", description)
             self.last_error = description
+            self.log_observed(ServerState.OFFLINE, f"check failed: {description}")
             return ServerState.OFFLINE, None
         self.last_error = None
 
         logger.debug("Raw status: %s", status.raw)
 
         if any("offline" in text for text in texts):
-            return ServerState.OFFLINE, status
-        if any("starting" in text or "preparing" in text for text in texts):
-            return ServerState.STARTING, status
-        if any("stopping" in text for text in texts):
-            return ServerState.STOPPING, status
-        # The Aternos waiting proxy reports 0 max players, a real server never does.
-        return ServerState.WAITING if status.players.max == 0 else ServerState.ONLINE, status
+            state = ServerState.OFFLINE
+        elif any("starting" in text or "preparing" in text for text in texts):
+            state = ServerState.STARTING
+        elif any("stopping" in text for text in texts):
+            state = ServerState.STOPPING
+        else:
+            # The Aternos waiting proxy reports 0 max players, a real server never does.
+            state = ServerState.WAITING if status.players.max == 0 else ServerState.ONLINE
+        self.log_observed(state, f"version={status.version.name!r} motd={texts[0]!r} players={status.players.online}/{status.players.max}")
+        return state, status
+
+    def log_observed(self, state: ServerState, details: str) -> None:
+        if state is not self.last_observed:
+            logger.info("Observed state: %s -> %s (%s)", self.last_observed, state, details)
+            self.last_observed = state
 
     def build_embed(self, state: ServerState, status: JavaStatusResponse | None) -> dict[str, object]:
         config = self.config
